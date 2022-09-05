@@ -372,7 +372,7 @@ if __name__ == "__main__":
         loss_fn = loss_fn.to(DEVICE)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
 
-        train_loss, test_loss = self_training(dcunet, threshold=0.8, TRAIN_INPUT_DIR=TRAIN_INPUT_DIR, 
+        train_loss, test_loss = self_training(dcunet, threshold=10, TRAIN_INPUT_DIR=TRAIN_INPUT_DIR, 
                             TRAIN_TARGET_DIR=TRAIN_TARGET_DIR, 
                             NO_LABEL_TRAIN_DIR=NO_LABEL_TRAIN_DIR,
                             test_noisy_files=test_noisy_files,loss_fn=loss_fn, 
