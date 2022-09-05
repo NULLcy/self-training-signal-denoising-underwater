@@ -1,3 +1,4 @@
+from cgitb import Hook
 import os
 import gc
 import torch
@@ -54,11 +55,45 @@ def resample(original, old_rate, new_rate):
     else:
         return original
 
-def getMetrics(test_loader):
-    pass
+def extract_overlapped_windows(x,nperseg,noverlap,window=None):
+    step = nperseg - noverlap
+    shape = x.shape[:-1]+((x.shape[-1]-noverlap)//step, nperseg)
+    strides = x.strides[:-1]+(step*x.strides[-1], x.strides[-1])
+    result = np.lib.stride_tricks.as_strided(x, shape=shape,
+                                             strides=strides)
+    if window is not None:
+        result = window * result
+    return result
 
-def SNR(wav_pcm):
-    pass
+def SNRseg(clean_speech, processed_speech,fs, frameLen=0.03, overlap=0.75):
+    eps=np.finfo(np.float64).eps
+
+    winlength   = round(frameLen*fs) #window length in samples
+    skiprate    = int(np.floor((1-overlap)*frameLen*fs)) #window skip in samples
+    MIN_SNR     = -10 # minimum SNR in dB
+    MAX_SNR     =  35 # maximum SNR in dB
+
+    hannWin=0.5*(1-np.cos(2*np.pi*np.arange(1,winlength+1)/(winlength+1)))
+    clean_speech_framed=extract_overlapped_windows(clean_speech,winlength,winlength-skiprate,hannWin)
+    processed_speech_framed=extract_overlapped_windows(processed_speech,winlength,winlength-skiprate,hannWin)
+    
+    signal_energy = np.power(clean_speech_framed,2).sum(-1)
+    noise_energy = np.power(clean_speech_framed-processed_speech_framed,2).sum(-1)
+    
+    segmental_snr = 10*np.log10(signal_energy/(noise_energy+eps)+eps)
+    segmental_snr[segmental_snr<MIN_SNR]=MIN_SNR
+    segmental_snr[segmental_snr>MAX_SNR]=MAX_SNR
+    segmental_snr=segmental_snr[:-1] # remove last frame -> not valid
+    return np.mean(segmental_snr)
+
+def snr(reference, test):  
+    numerator = 0.0
+    denominator = 0.0
+    for i in range(len(reference)):
+        numerator += reference[i]**2
+        denominator += (reference[i] - test[i])**2
+    return 10*np.log10(numerator/denominator)
+
 
 ######################################## TRAIN #########################################
 
@@ -269,7 +304,8 @@ def self_training(net, threshold, TRAIN_INPUT_DIR, TRAIN_TARGET_DIR, NO_LABEL_TR
             for j, x_noisy_stft, g1_stft, g1_wav, g2_wav, x_clean_stft in enumerate(no_label_train_loader):
                 g1_stft = g1_stft.to(DEVICE)
                 fg1_wav = net(x_noisy_stft, n_fft=N_FFT, hop_length=HOP_LENGTH)
-                if SNR(fg1_wav) > threshold:
+                x_noisy = torch.istft(x_noisy_stft, n_fft=N_FFT, hop_length=HOP_LENGTH)
+                if SNRseg(fg1_wav, x_noisy,fs=12500, frameLen=0.03, overlap=0.75) > threshold:
                     train_input_files.append(no_label_train_files[j])
                     filepath = os.path.join(TRAIN_TARGET_DIR, str(no_label_train_files[j]).split("\\")[-1].split('.')[0] + "_addLabel.wav")
                     pcm2wav(filepath, fg1_wav, 12500, True)
@@ -284,7 +320,7 @@ def self_training(net, threshold, TRAIN_INPUT_DIR, TRAIN_TARGET_DIR, NO_LABEL_TR
         
 if __name__ == "__main__":
     if train_style == "unsupervised":
-        ######################################## self-supervised Train CONFI #########################################
+        ######################################## unsupervised Train CONFI #########################################
         TRAIN_INPUT_DIR = Path('/home/abc/n2n/Datasets/WhiteNoise_Train_Input')
         TEST_NOISY_DIR = Path('/home/abc/n2n/Datasets/WhiteNoise_Test_Input')
 
